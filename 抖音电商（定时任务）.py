@@ -1,9 +1,10 @@
-# ===================== 日志配置（必加，定时任务必须有）=====================
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
-# 自动生成日志文件（和脚本同一目录）
+
+
+#定时任务日志文件
 script_dir = os.path.dirname(os.path.abspath(__file__))
 log_file = os.path.join(script_dir, "auto_export.log")
 
@@ -24,11 +25,12 @@ try:
     import numpy as np
     import matplotlib.pyplot as plt
     from matplotlib import rcParams
+    import seaborn as sns
 
     ## 字体设置（解决中文乱码）
     rcParams['font.sans-serif'] = 'SimHei'
     rcParams['axes.unicode_minus'] = False
-    import seaborn as sns
+
 
     df = pd.read_csv('C:/Users\Administrator\Desktop/douyin.csv')
     #缺失值处理
@@ -45,6 +47,120 @@ try:
            '售出数量'
     ]
     df.columns = columns
+    #=================================GMV计算==================================
+    # 统计用户数
+    print(f"用户数量: {df['用户ID'].nunique()}")
+
+    # 移除用户ID为0的记录
+    df = df[df['用户ID'] != 0]
+    print(f"\n移除用户ID为0后的数据量: {len(df)}")
+
+    # 添加模拟的购买日期列
+    np.random.seed(42)
+    current_date = datetime.now()
+    df['购买日期'] = [current_date - timedelta(days=np.random.randint(1, 90)) for _ in range(len(df))]
+
+    # 计算RFM指标
+    rfm_df = df.groupby('用户ID').agg({
+        'GMV': ['sum', 'count'],
+        '购买日期': 'max'
+    })
+
+    # 重命名列
+    rfm_df.columns = ['Monetary', 'Frequency', '最近购买日期']
+
+    # 计算Recency
+    rfm_df['Recency'] = (current_date - rfm_df['最近购买日期']).dt.days
+    rfm_df = rfm_df.drop('最近购买日期', axis=1)
+
+    # 对RFM指标进行标准化
+    from sklearn.preprocessing import StandardScaler
+
+    scaler = StandardScaler()
+    rfm_scaled = scaler.fit_transform(rfm_df)
+    rfm_scaled = pd.DataFrame(rfm_scaled, index=rfm_df.index, columns=rfm_df.columns)
+
+    # 使用K-means聚类进行客户分群
+    from sklearn.cluster import KMeans
+
+    # 确定最佳聚类数
+    inertia = []
+    for k in range(1, 11):
+        kmeans = KMeans(n_clusters=k, random_state=42)
+        kmeans.fit(rfm_scaled)
+        inertia.append(kmeans.inertia_)
+
+    # 绘制肘部图
+    plt.figure(figsize=(10, 6))
+    plt.plot(range(1, 11), inertia, marker='o')
+    plt.title('肘部法则确定最佳聚类数')
+    plt.xlabel('聚类数')
+    plt.ylabel('惯性')
+    plt.savefig('c:\\Users\\Administrator\\Desktop\\肘部图.png')
+    plt.show()
+
+    # 根据上图得到最佳聚类数4
+    n_clusters = 4
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+    rfm_df['Cluster'] = kmeans.fit_predict(rfm_scaled)
+
+    # 分析每个聚类的特征
+    print("\n各聚类的RFM特征：")
+    cluster_analysis = rfm_df.groupby('Cluster').agg({
+        'Recency': 'mean',
+        'Frequency': 'mean',
+        'Monetary': 'mean',
+        'Cluster': 'count'
+    }).rename(columns={'Cluster': 'Customer Count'})
+    print(cluster_analysis)
+
+
+    # 客户分群命名
+    def get_customer_segment(row):
+        cluster = row['Cluster']
+        if cluster == 0:
+            return '低价值客户'
+        elif cluster == 1:
+            return '高价值客户'
+        elif cluster == 2:
+            return '中等价值客户'
+        else:
+            return '潜在价值客户'
+
+
+    rfm_df['Segment'] = rfm_df.apply(get_customer_segment, axis=1)
+
+    # 统计各客户群体数量
+    segment_counts = rfm_df['Segment'].value_counts()
+    print("\n各客户群体数量：")
+    print(segment_counts)
+
+    # 可视化客户群体分布
+    plt.figure(figsize=(10, 6))
+    segment_counts.plot(kind='bar', color='skyblue')
+    plt.title('客户群体分布')
+    plt.xlabel('客户群体')
+    plt.ylabel('数量')
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.savefig('c:\\Users\\Administrator\\Desktop\\客户群体分布.png')
+    plt.show()
+
+    # 保存RFM分析结果
+    rfm_df.to_csv('c:\\Users\\Administrator\\Desktop\\RFM分析结果.csv')
+    print("\nRFM分析结果已保存到：c:\\Users\\Administrator\\Desktop\\RFM分析结果.csv")
+
+    # 打印分析总结
+    print("\nRFM分析总结：")
+    print(f"总用户数: {len(rfm_df)}")
+    print(f"平均购买频率: {rfm_df['Frequency'].mean():.2f}")
+    print(f"平均消费金额: {rfm_df['Monetary'].mean():.2f}")
+    print(f"平均Recency: {rfm_df['Recency'].mean():.2f}天")
+    print(f"客户群体数量: {rfm_df['Segment'].nunique()}")
+
+
+    #=======================================GMV分析===================================
+
     gmv_result = df.groupby("一级类目")["GMV"].sum().reset_index()
     gmv_result = gmv_result.sort_values(by="GMV", ascending=False)
 
